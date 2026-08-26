@@ -2,7 +2,7 @@ import os
 
 # --- network ---
 
-RPC_URL = os.getenv("RPC_URL", "https://eth.llamarpc.com")
+RPC_URL = os.getenv (RPC_URL = "https://cloudflare-eth.com/")
 CHAIN_ID = 1
 
 # --- wallet ---
