@@ -1,12 +1,8 @@
-"""
-Utility functions for bot operations.
-"""
-
 import os
 import json
 import re
 from pathlib import Path
-from .export import send
+from export import send
 
 class setup:
     def __init__(self):
