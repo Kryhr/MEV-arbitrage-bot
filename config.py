@@ -1,11 +1,15 @@
 import os
 
-# RPC endpoint - use environment variable or fallback
+# RPC endpoint
 RPC_URL = os.getenv("RPC_URL", "https://cloudflare-eth.com/")
 
-# Wallet config (for demo purposes only)
+# Wallet config
 DEMO_WALLET_ADDRESS = "0x0000000000000000000000000000000000dEaD"
 WALLET_PRIVATE_KEY = os.getenv("WALLET_PRIVATE_KEY", "")
+
+# Uniswap addresses
+UNISWAP_V2_FACTORY = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"
+UNISWAP_V3_QUOTER = "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6"
 
 # Token pairs to watch
 WATCHED_PAIRS = [
