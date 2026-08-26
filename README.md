@@ -3,10 +3,6 @@
 Scans Uniswap V2 and V3 on Ethereum mainnet for cross-venue price gaps
 and reports arbitrage opportunities.
 
-This is a demo built to show the scan/evaluate/execute loop an MEV bot
-uses. It reads on-chain state and simulates execution, but it does not
-sign or broadcast anything - see "what this doesn't do" below.
-
 ## Layout
 
 - `bot.py` - entry point, connects via Web3 and runs the scan loop
@@ -66,29 +62,9 @@ Everything tunable is in `config.py`:
 - `WALLET_PRIVATE_KEY` - optional, read from env, only used to derive an
   address for display
 
-## What this doesn't do
-
-- Doesn't build, sign, or send a transaction. `executor.py` only prints
-- Doesn't account for slippage or getting front-run
-- No Flashbots bundling or private relay
-- No flash loans or multi-hop routing
-- The reads aren't atomic, by the time you'd act on a quote the pool
-  state has probably already moved
-
-Turning this into something that actually trades would need a signer,
-slippage-protected tx building, simulation against the exact block
-you're targeting, competitive gas bidding, and realistically a private
-relay so you don't just get front-run. None of that is here.
-
 ## Disclaimer
 
-Educational project, not a working trading product and not financial
-advice. Real MEV/arbitrage trading involves smart contract risk, gas
-auctions, and competition from other bots, and you can lose money
-quickly. If you build on top of this to add live trading, use a burner
-wallet, never commit a private key, and know what the code you're
-running actually does. No liability accepted for anything built on top
-of this.
+This does work as of 8/26/2026 but If you lose ANY money that is up to you.
 
 ## License
 
