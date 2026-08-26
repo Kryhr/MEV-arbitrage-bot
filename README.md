@@ -1,40 +1,21 @@
-# MEV Arbitrage Bot (Demo)
+# MEV Arbitrage Bot
 
-A Python bot that scans Uniswap V2 and V3 on Ethereum mainnet for
-cross-venue price discrepancies and reports arbitrage opportunities in
-real time.
+Scans Uniswap V2 and V3 on Ethereum mainnet for cross-venue price gaps
+and reports arbitrage opportunities.
 
-> **This is a portfolio/demo project.** It reads on-chain state and
-> simulates trade execution, but it does **not** sign or broadcast any
-> transaction. See [Disclaimer](#disclaimer) below before you do anything
-> with it.
+This is a demo built to show the scan/evaluate/execute loop an MEV bot
+uses. It reads on-chain state and simulates execution, but it does not
+sign or broadcast anything - see "what this doesn't do" below.
 
-## How it works
+## Layout
 
-```
-bot.py         entry point: connects to Ethereum, runs the scan loop
-scanner.py     reads Uniswap V2 reserves + Uniswap V3 quoter to build
-               a price for each watched pair on each venue
-executor.py    takes an opportunity, estimates gas cost and net profit,
-               and prints a "trade executed" summary — nothing is sent
-config.py      RPC endpoint, token list, thresholds, wallet placeholder
-```
-
-The loop in `bot.py` is the classic three-stage MEV bot shape:
-
-1. **Scan** — for every pair in `config.WATCHED_PAIRS`, pull a spot price
-   from Uniswap V2 (via pool reserves) and Uniswap V3 (via the on-chain
-   `Quoter` contract, across the standard fee tiers).
-2. **Evaluate** — if the spread between the cheapest and most expensive
-   venue clears `MIN_SPREAD_PCT`, estimate gas cost from the live gas
-   price and compute an estimated net profit in USD.
-3. **Execute** — if net profit clears `MIN_PROFIT_USD`, `executor.py`
-   prints a `Trade executed` summary with a simulated transaction hash.
-   No transaction is ever built, signed, or sent — see
-   [What this bot does NOT do](#what-this-bot-does-not-do).
-
-All chain reads go through a standard `web3.py` `HTTPProvider`, so any
-JSON-RPC endpoint works (a public RPC, Infura, Alchemy, or your own node).
+- `bot.py` - entry point, connects via Web3 and runs the scan loop
+- `scanner.py` - reads Uniswap V2 reserves and the V3 quoter to build a
+  price for each watched pair on each venue
+- `executor.py` - takes an opportunity, estimates gas cost and net
+  profit, prints a result. no transaction is built or sent
+- `config.py` - RPC endpoint, token list, thresholds, wallet key (read
+  from env, never hardcoded)
 
 ## Setup
 
@@ -42,91 +23,73 @@ JSON-RPC endpoint works (a public RPC, Infura, Alchemy, or your own node).
 git clone https://github.com/Kryhr/MEV-arbitrage-bot.git
 cd MEV-arbitrage-bot
 python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+source venv/bin/activate      # windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Set an RPC endpoint (optional — defaults to a public one):
+Set an RPC endpoint if you don't want to use the default public one:
 
 ```bash
-export RPC_URL="https://mainnet.infura.io/v3/YOUR_KEY"   # bash
-$env:RPC_URL = "https://mainnet.infura.io/v3/YOUR_KEY"    # PowerShell
+export RPC_URL="https://mainnet.infura.io/v3/YOUR_KEY"
 ```
 
 Run it:
 
 ```bash
-python bot.py --once     # single scan pass, then exit
-python bot.py            # loop continuously, polling every SCAN_INTERVAL_SECONDS
+python bot.py --once     # single pass
+python bot.py            # loop, polling every SCAN_INTERVAL_SECONDS
 ```
 
-Example output:
+Sample output:
 
 ```
-============================================================
-  MEV Arbitrage Bot — DEMO / SIMULATION MODE
-  No transactions will be signed or broadcast.
-============================================================
-Connected: https://eth.llamarpc.com
-Chain ID:  1
-Wallet:    0x0000000000000000000000000000000000dEaD
-Watching:  5 pairs on Uniswap V2/V3
-ETH/USD ref price: $2,481.13
+connected: https://eth.llamarpc.com
+chain id: 1
+wallet: 0x0000000000000000000000000000000000dEaD
+watching 5 pairs on uniswap v2/v3
+eth/usd ref price: $2,481.13
 
-------------------------------------------------------------
-[SIMULATED] Arbitrage opportunity: WETH/USDC
-  Buy on:   uniswap_v3   @ 2478.910000
-  Sell on:  uniswap_v2   @ 2486.220000
-  Spread:   0.295%
-  Est. gas cost:    $4.12
-  Est. net profit:  $31.87
-  Trade executed (simulated). tx: 0x7f3a9c...
-------------------------------------------------------------
+[WETH/USDC] buy uniswap_v3 @ 2478.910000 -> sell uniswap_v2 @ 2486.220000 (spread 0.295%)
+  gas est: $4.12  net profit est: $31.87
+  Trade executed. tx: 0x7f3a9c1e...
 ```
 
-## Configuration
+## Config
 
-Everything tunable lives in `config.py`:
+Everything tunable is in `config.py`:
 
-| Setting | Purpose |
-|---|---|
-| `RPC_URL` | JSON-RPC endpoint |
-| `WATCHED_PAIRS` | token pairs to scan |
-| `MIN_SPREAD_PCT` | minimum raw price spread before considering a pair |
-| `MIN_PROFIT_USD` | minimum estimated profit after gas before "executing" |
-| `SCAN_INTERVAL_SECONDS` | polling interval for the continuous loop |
-| `WALLET_PRIVATE_KEY` | optional, read from the `WALLET_PRIVATE_KEY` env var — only used to derive an address for display |
+- `RPC_URL` - JSON-RPC endpoint
+- `WATCHED_PAIRS` - token pairs to scan
+- `MIN_SPREAD_PCT` - minimum raw spread before a pair is even considered
+- `MIN_PROFIT_USD` - minimum profit after gas before it counts as a hit
+- `SCAN_INTERVAL_SECONDS` - polling interval for the loop
+- `WALLET_PRIVATE_KEY` - optional, read from env, only used to derive an
+  address for display
 
-## What this bot does NOT do
+## What this doesn't do
 
-This is a demo built to showcase the architecture of an MEV arbitrage
-bot, not a production trading system. Notably, it does **not**:
+- Doesn't build, sign, or send a transaction. `executor.py` only prints
+- Doesn't account for slippage or getting front-run
+- No Flashbots bundling or private relay
+- No flash loans or multi-hop routing
+- The reads aren't atomic, by the time you'd act on a quote the pool
+  state has probably already moved
 
-- Build, sign, or broadcast any transaction (`executor.py` only prints)
-- Account for slippage, MEV competition, or mempool front-running
-- Bundle transactions via Flashbots or any other private relay
-- Handle flash loans, multi-hop routing, or gas auctions
-- Guarantee the on-chain reads above are race-free — by the time you'd
-  act on a quote, the underlying pool state has likely moved
-
-Turning this into something that actually trades would require, at
-minimum: a signer, slippage-protected transaction building, simulation
-against the exact block you intend to land in, competitive gas/priority
-fee bidding, and (realistically) a private relay to avoid getting
-front-run by other searchers. None of that is implemented here.
+Turning this into something that actually trades would need a signer,
+slippage-protected tx building, simulation against the exact block
+you're targeting, competitive gas bidding, and realistically a private
+relay so you don't just get front-run. None of that is here.
 
 ## Disclaimer
 
-This repository is provided **for educational purposes only**, to
-illustrate how an MEV arbitrage bot is structured. It is not financial
-advice and not a working trading product.
+Educational project, not a working trading product and not financial
+advice. Real MEV/arbitrage trading involves smart contract risk, gas
+auctions, and competition from other bots, and you can lose money
+quickly. If you build on top of this to add live trading, use a burner
+wallet, never commit a private key, and know what the code you're
+running actually does. No liability accepted for anything built on top
+of this.
 
-- No transaction is ever signed or sent by this code.
-- Real MEV/arbitrage trading involves smart contract risk, gas auctions,
-  competition from other searchers and bots, and the very real
-  possibility of losing money — often quickly.
-- If you extend this to interact with mainnet, use a dedicated burner
-  wallet, never commit a private key to source control, and understand
-  the code you are running before you run it.
-- The author assumes no liability for any use of this code, including
-  any modified version that adds live trading capability.
+## License
+
+MIT, see [LICENSE](LICENSE).

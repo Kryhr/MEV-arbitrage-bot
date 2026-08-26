@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
-bot.py
+Entry point for the arbitrage bot. Connects to an RPC endpoint, scans the
+watched pairs from config.py across Uniswap V2/V3, and hands anything
+above the spread threshold off to executor.py.
 
-Main entry point for the MEV arbitrage bot demo.
-
-Connects to Ethereum over Web3, repeatedly scans a watchlist of token
-pairs across Uniswap V2 and V3 for price discrepancies, and "executes"
-(simulates) any opportunity that clears the configured profit threshold.
-
-This bot NEVER sends a transaction — see executor.py for details. It's a
-portfolio piece demonstrating the scan -> evaluate -> execute loop that a
-real MEV bot would use, with the actually dangerous part (signing and
-broadcasting) deliberately left out.
+Nothing here signs or sends a transaction, see executor.py.
 
 Usage:
-    python bot.py            # run continuously
-    python bot.py --once     # run a single scan pass and exit
+    python bot.py            run continuously
+    python bot.py --once     run a single scan pass and exit
 """
 
 import argparse
@@ -29,33 +22,27 @@ import executor
 from scanner import Scanner
 
 
-def connect() -> Web3:
+def connect():
     w3 = Web3(Web3.HTTPProvider(config.RPC_URL))
     if not w3.is_connected():
-        print(f"[ERROR] Could not connect to RPC endpoint: {config.RPC_URL}")
+        print(f"could not connect to RPC endpoint: {config.RPC_URL}")
         sys.exit(1)
     return w3
 
 
-def get_wallet_address(w3: Web3) -> str:
+def get_wallet_address(w3):
     if config.WALLET_PRIVATE_KEY:
         try:
-            account = w3.eth.account.from_key(config.WALLET_PRIVATE_KEY)
-            return account.address
+            return w3.eth.account.from_key(config.WALLET_PRIVATE_KEY).address
         except Exception:
-            print("[WARN] WALLET_PRIVATE_KEY is set but invalid — falling back to demo address.")
+            print("WALLET_PRIVATE_KEY is set but invalid, falling back to demo address")
     return config.DEMO_WALLET_ADDRESS
 
 
-def get_eth_price_usd(w3: Web3) -> float:
-    """
-    Rough ETH/USD reference price for gas-cost math, derived from the
-    on-chain WETH/USDC pool this bot already scans. Falls back to a static
-    estimate if that read fails for any reason.
-    """
+def get_eth_price_usd(w3):
+    # derive a rough ETH/USD reference from the WETH/USDC pool we already scan
     try:
-        scanner = Scanner(w3)
-        quote = scanner.get_v2_price("WETH", "USDC")
+        quote = Scanner(w3).get_v2_price("WETH", "USDC")
         if quote and quote.price > 0:
             return quote.price
     except Exception:
@@ -63,11 +50,11 @@ def get_eth_price_usd(w3: Web3) -> float:
     return 2500.0
 
 
-def run_scan_pass(w3: Web3, scanner: Scanner, eth_price_usd: float) -> int:
+def run_scan_pass(w3, scanner, eth_price_usd):
     opportunities = scanner.find_opportunities()
 
     if not opportunities:
-        print(f"[{time.strftime('%H:%M:%S')}] No opportunities above {config.MIN_SPREAD_PCT}% spread this pass.")
+        print(f"[{time.strftime('%H:%M:%S')}] nothing above {config.MIN_SPREAD_PCT}% spread this pass")
         return 0
 
     executed = 0
@@ -75,29 +62,23 @@ def run_scan_pass(w3: Web3, scanner: Scanner, eth_price_usd: float) -> int:
         result = executor.execute(w3, opp, eth_price_usd=eth_price_usd)
         if result.success:
             executed += 1
-
     return executed
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MEV arbitrage bot (demo — simulation only)")
+    parser = argparse.ArgumentParser(description="MEV arbitrage bot (simulation only)")
     parser.add_argument("--once", action="store_true", help="run a single scan pass and exit")
     args = parser.parse_args()
-
-    print("=" * 60)
-    print("  MEV Arbitrage Bot — DEMO / SIMULATION MODE")
-    print("  No transactions will be signed or broadcast.")
-    print("=" * 60)
 
     w3 = connect()
     wallet_address = get_wallet_address(w3)
     eth_price_usd = get_eth_price_usd(w3)
 
-    print(f"Connected: {config.RPC_URL}")
-    print(f"Chain ID:  {w3.eth.chain_id}")
-    print(f"Wallet:    {wallet_address}")
-    print(f"Watching:  {len(config.WATCHED_PAIRS)} pairs on Uniswap V2/V3")
-    print(f"ETH/USD ref price: ${eth_price_usd:,.2f}")
+    print(f"connected: {config.RPC_URL}")
+    print(f"chain id: {w3.eth.chain_id}")
+    print(f"wallet: {wallet_address}")
+    print(f"watching {len(config.WATCHED_PAIRS)} pairs on uniswap v2/v3")
+    print(f"eth/usd ref price: ${eth_price_usd:,.2f}")
     print()
 
     scanner = Scanner(w3)
@@ -111,7 +92,7 @@ def main():
             run_scan_pass(w3, scanner, eth_price_usd)
             time.sleep(config.SCAN_INTERVAL_SECONDS)
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nstopped")
 
 
 if __name__ == "__main__":

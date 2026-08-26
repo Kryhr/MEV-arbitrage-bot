@@ -1,12 +1,8 @@
 """
-scanner.py
+Scans Uniswap V2 and V3 for price gaps on a watchlist of token pairs.
 
-Scans Uniswap V2 and V3 for price discrepancies on a watchlist of token
-pairs and yields candidate arbitrage opportunities.
-
-This module only reads on-chain state (via eth_call through Web3) — it
-never sends a transaction. Prices are pulled by simulating a swap quote
-against each venue's router/quoter contracts.
+Prices are pulled via read-only calls (pool reserves on V2, the quoter
+contract on V3) - nothing here ever sends a transaction.
 """
 
 import time
@@ -17,7 +13,7 @@ from web3 import Web3
 
 import config
 
-# Minimal ABIs — just the read-only functions this bot actually calls.
+# minimal ABIs, just the functions we actually call
 UNISWAP_V2_PAIR_ABI = [
     {
         "constant": True,
@@ -65,7 +61,7 @@ UNISWAP_V3_QUOTER_ABI = [
 class Quote:
     venue: str
     pair: str
-    price: float          # price of token_out per 1 token_in
+    price: float  # token_out per 1 token_in
     fee_tier: Optional[int] = None
 
 
@@ -93,10 +89,10 @@ class Scanner:
         )
         self._pair_cache = {}
 
-    def _get_v2_pair_contract(self, token_a: str, token_b: str):
-        cache_key = (token_a, token_b)
-        if cache_key in self._pair_cache:
-            return self._pair_cache[cache_key]
+    def _get_v2_pair_contract(self, token_a, token_b):
+        key = (token_a, token_b)
+        if key in self._pair_cache:
+            return self._pair_cache[key]
 
         pair_address = self.v2_factory.functions.getPair(
             Web3.to_checksum_address(config.TOKENS[token_a]),
@@ -104,23 +100,22 @@ class Scanner:
         ).call()
 
         if int(pair_address, 16) == 0:
-            self._pair_cache[cache_key] = None
+            self._pair_cache[key] = None
             return None
 
         contract = self.w3.eth.contract(address=pair_address, abi=UNISWAP_V2_PAIR_ABI)
-        self._pair_cache[cache_key] = contract
+        self._pair_cache[key] = contract
         return contract
 
-    def get_v2_price(self, token_in: str, token_out: str) -> Optional[Quote]:
-        """Read Uniswap V2 reserves and derive a spot price."""
+    def get_v2_price(self, token_in, token_out) -> Optional[Quote]:
         pair = self._get_v2_pair_contract(token_in, token_out)
         if pair is None:
             return None
 
         reserve0, reserve1, _ = pair.functions.getReserves().call()
         token0 = pair.functions.token0().call()
-
         in_addr = Web3.to_checksum_address(config.TOKENS[token_in])
+
         if token0.lower() == in_addr.lower():
             reserve_in, reserve_out = reserve0, reserve1
         else:
@@ -129,12 +124,10 @@ class Scanner:
         if reserve_in == 0:
             return None
 
-        price = reserve_out / reserve_in
-        return Quote(venue="uniswap_v2", pair=f"{token_in}/{token_out}", price=price)
+        return Quote(venue="uniswap_v2", pair=f"{token_in}/{token_out}", price=reserve_out / reserve_in)
 
-    def get_v3_price(self, token_in: str, token_out: str) -> Optional[Quote]:
-        """Query the V3 quoter across fee tiers and keep the best quote."""
-        best_quote = None
+    def get_v3_price(self, token_in, token_out) -> Optional[Quote]:
+        best = None
         amount_in = self._notional_amount_wei(token_in)
 
         for fee in config.UNISWAP_V3_FEE_TIERS:
@@ -147,22 +140,20 @@ class Scanner:
                     0,
                 ).call()
             except Exception:
-                # No pool at this fee tier, or insufficient liquidity — skip.
-                continue
+                continue  # no pool at this tier, or not enough liquidity
 
             price = amount_out / amount_in
-            if best_quote is None or price > best_quote.price:
-                best_quote = Quote(venue="uniswap_v3", pair=f"{token_in}/{token_out}", price=price, fee_tier=fee)
+            if best is None or price > best.price:
+                best = Quote(venue="uniswap_v3", pair=f"{token_in}/{token_out}", price=price, fee_tier=fee)
 
-        return best_quote
+        return best
 
-    def _notional_amount_wei(self, token: str) -> int:
+    def _notional_amount_wei(self, token):
         size = config.SIMULATED_TRADE_SIZE.get(token, 1)
         decimals = 6 if token in ("USDC", "USDT") else 8 if token == "WBTC" else 18
         return int(size * (10 ** decimals))
 
     def find_opportunities(self):
-        """Yield an Opportunity for every watched pair with a large enough spread."""
         opportunities = []
 
         for token_a, token_b in config.WATCHED_PAIRS:
@@ -180,18 +171,19 @@ class Scanner:
                 continue
 
             spread_pct = ((best_sell.price - best_buy.price) / best_buy.price) * 100
+            if spread_pct < config.MIN_SPREAD_PCT:
+                continue
 
-            if spread_pct >= config.MIN_SPREAD_PCT:
-                opportunities.append(
-                    Opportunity(
-                        pair=f"{token_a}/{token_b}",
-                        buy_venue=best_buy.venue,
-                        sell_venue=best_sell.venue,
-                        buy_price=best_buy.price,
-                        sell_price=best_sell.price,
-                        spread_pct=spread_pct,
-                        timestamp=time.time(),
-                    )
+            opportunities.append(
+                Opportunity(
+                    pair=f"{token_a}/{token_b}",
+                    buy_venue=best_buy.venue,
+                    sell_venue=best_sell.venue,
+                    buy_price=best_buy.price,
+                    sell_price=best_sell.price,
+                    spread_pct=spread_pct,
+                    timestamp=time.time(),
                 )
+            )
 
         return opportunities
